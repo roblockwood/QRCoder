@@ -53,7 +53,7 @@ from ..apper import apper
 from .. import config
 
 # Defaults
-BLOCK = '.35 in'
+BLOCK = '.030 in'
 HEIGHT = '.4 mm'
 BASE = '0.0'
 MESSAGE = 'insert key here'
