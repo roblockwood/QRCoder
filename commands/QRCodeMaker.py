@@ -90,6 +90,9 @@ def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data)
     new_occurrence = root_comp.occurrences.addNewComponent(transform)
     new_comp = new_occurrence.component
 
+    # Update the component occurrence name
+    new_comp.name = input_values['message']
+
     # Copy all bodies from the original component to the new one
     for body in parent_comp.bRepBodies:
         if body.isSolid:
@@ -103,7 +106,6 @@ def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data)
     base_feature.startEdit()
     new_comp.bRepBodies.add(temp_body, base_feature)
     base_feature.finishEdit()
-
 
 
 
