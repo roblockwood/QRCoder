@@ -74,24 +74,37 @@ def get_target_body(sketch_point):
         return None
 
 
-def make_real_geometry(target_body: adsk.fusion.BRepBody, temp_body: adsk.fusion.BRepBody):
+def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data):
     ao = apper.AppObjects()
+    design = ao.design
+    root_comp = design.rootComponent
 
-    if target_body is None:
-        component = ao.design.activeComponent
-    else:
-        component = target_body.parentComponent
+    if not target_body:
+        ao.ui.messageBox("No target body found.")
+        return
 
-    base_feature = component.features.baseFeatures.add()
+    parent_comp = target_body.parentComponent
+
+    # Create a new occurrence/component in the root
+    transform = adsk.core.Matrix3D.create()
+    new_occurrence = root_comp.occurrences.addNewComponent(transform)
+    new_comp = new_occurrence.component
+
+    # Copy all bodies from the original component to the new one
+    for body in parent_comp.bRepBodies:
+        if body.isSolid:
+            body.copyToComponent(new_occurrence)
+
+    # Create the QR code temp geometry
+    temp_body = get_qr_temp_geometry(qr_data, input_values)
+
+    # Add the QR code geometry as a base feature to the new component
+    base_feature = new_comp.features.baseFeatures.add()
     base_feature.startEdit()
-    component.bRepBodies.add(temp_body, base_feature)
+    new_comp.bRepBodies.add(temp_body, base_feature)
     base_feature.finishEdit()
 
-    if target_body is not None:
-        tools = adsk.core.ObjectCollection.create()
-        tools.add(base_feature.bodies.item(0))
-        combine_input = component.features.combineFeatures.createInput(component.bRepBodies.item(0), tools)
-        component.features.combineFeatures.add(combine_input)
+
 
 
 def clear_graphics(graphics_group: adsk.fusion.CustomGraphicsGroup):
@@ -310,13 +323,12 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                     qr_data = import_qr_from_file(file_name)
 
             if len(qr_data) > 0:
-                temp_body = get_qr_temp_geometry(qr_data, input_values)
+                sketch_point = input_values['sketch_point'][0]
+                target_body = get_target_body(sketch_point)
 
-                target_body = get_target_body(input_values['sketch_point'][0])
+                # Updated to match new function signature
+                make_real_geometry(target_body, input_values, qr_data)
 
-                # TODO Why is custom graphics so slow?
-                make_real_geometry(target_body, temp_body)
-                # make_graphics(t_body, self.graphics_group)
                 args.isValidResult = True
 
             self.make_preview = False
