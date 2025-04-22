@@ -56,7 +56,7 @@ from .. import config
 HEIGHT = '.4 mm'
 BASE = '0.0 in'
 MESSAGE = 'input here'
-QR_TARGET_SIZE_MM = 24  # Target QR code size in millimeters
+QR_TARGET_SIZE_MM = '24 mm'  # Target QR code size in millimeters
 FILE_NAME = 'QR-17x.csv'
 BLOCK = '.03 in'
 
@@ -123,7 +123,7 @@ def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data)
             body.name = "text"
             break
 
-    return new_comp  # Return the newly created component
+    return new_comp  # Return None if no target body
 
 
 
@@ -157,11 +157,10 @@ def get_qr_temp_geometry(qr_data, input_values):
 
     qr_size = len(qr_data)
 
-    # Calculate block size to fit within the target size
-    overall_size_mm = QR_TARGET_SIZE_MM
-    overall_size = ao.units_manager.convert(overall_size_mm, 'mm', ao.units_manager.internalUnits)
+    # Calculate block size from the overall size and qr_size
+    overall_size: float = input_values['qr_size']
     side = overall_size / qr_size
-    input_values['block_size'] = side
+    input_values['block_size'] = side # store block size
 
     middle_point = sketch_point.worldGeometry
     start_point = middle_point.copy()
@@ -248,18 +247,18 @@ def build_qr_code(message, args):
 
 def make_qr_from_message(input_values):
     message: str = input_values['message']
-    use_user_size: bool = input_values['use_user_size']
-    user_size: int = input_values['user_size']
-    mode: str = input_values['mode']
-    error_type: str = input_values['error_type']
+    # use_user_size: bool = input_values['use_user_size'] # Removed
+    # user_size: int = input_values['user_size'] # Removed
+    # mode: str = input_values['mode'] # Removed
+    # error_type: str = input_values['error_type'] # Removed
 
     args = {}
-    if use_user_size:
-        args['version'] = user_size
-    if mode != 'Automatic':
-        args['mode'] = mode
-    if error_type != 'Automatic':
-        args['error'] = error_type
+    # if use_user_size: # Removed
+    #     args['version'] = user_size
+    # if mode != 'Automatic': # Removed
+    #     args['mode'] = mode
+    # if error_type != 'Automatic': # Removed
+    #     args['error'] = error_type
 
     success = apper.check_dependency('pyqrcode', config.lib_path)
 
@@ -272,27 +271,26 @@ def make_qr_from_message(input_values):
 def add_make_inputs(inputs: adsk.core.CommandInputs):
     drop_style = adsk.core.DropDownStyles.TextListDropDownStyle
     inputs.addStringValueInput('message', 'Value to encode', MESSAGE)
-
-    inputs.addBoolValueInput('use_user_size', 'Specify size?', True, '', False)
-    size_spinner = inputs.addIntegerSpinnerCommandInput('user_size', 'QR Code Size (Version)', 1, 40, 1, 5)
-    size_spinner.isEnabled = False
-    size_spinner.isVisible = False
-
-    mode_drop_down = inputs.addDropDownCommandInput('mode', 'Encoding Mode', drop_style)
-    mode_items = mode_drop_down.listItems
-    mode_items.add('Automatic', True, '')
-    mode_items.add('alphanumeric', False, '')
-    mode_items.add('numeric', False, '')
-    mode_items.add('binary', False, '')
-    mode_items.add('kanji', False, '')
-
-    error_input = inputs.addDropDownCommandInput('error_type', 'Encoding Mode', drop_style)
-    error_items = error_input.listItems
-    error_items.add('Automatic', True, '')
-    error_items.add('L', False, '')
-    error_items.add('M', False, '')
-    error_items.add('Q', False, '')
-    error_items.add('H', False, '')
+    # inputs.addBoolValueInput('use_user_size', 'Specify size?', True, '', False) # Removed
+    # size_spinner = inputs.addIntegerSpinnerCommandInput('user_size', 'QR Code Size (Version)', 1, 40, 1, 5) # Removed
+    # size_spinner.isEnabled = False # Removed
+    # size_spinner.isVisible = False # Removed
+    #
+    # mode_drop_down = inputs.addDropDownCommandInput('mode', 'Encoding Mode', drop_style) # Removed
+    # mode_items = mode_drop_down.listItems # Removed
+    # mode_items.add('Automatic', True, '') # Removed
+    # mode_items.add('alphanumeric', False, '') # Removed
+    # mode_items.add('numeric', False, '') # Removed
+    # mode_items.add('binary', False, '') # Removed
+    # mode_items.add('kanji', False, '') # Removed
+    #
+    # error_input = inputs.addDropDownCommandInput('error_type', 'Encoding Mode', drop_style) # Removed
+    # error_items = error_input.listItems # Removed
+    # error_items.add('Automatic', True, '') # Removed
+    # error_items.add('L', False, '') # Removed
+    # error_items.add('M', False, '') # Removed
+    # error_items.add('Q', False, '') # Removed
+    # error_items.add('H', False, '') # Removed
 
 
 
@@ -301,6 +299,7 @@ def add_csv_inputs(inputs: adsk.core.CommandInputs):
 
     browse_button = inputs.addBoolValueInput('browse', 'Browse', False, '', False)
     browse_button.isFullWidth = True
+
 
 
 # Create file browser dialog box
@@ -351,14 +350,14 @@ class QRCodeMaker(apper.Fusion360CommandBase):
 
     def on_input_changed(self, command, inputs, changed_input, input_values):
         self.make_preview = True
-        if changed_input.id == 'use_user_size':
-            if input_values['use_user_size']:
-                inputs.itemById('user_size').isEnabled = True
-                inputs.itemById('user_size').isVisible = True
-            else:
-                inputs.itemById('user_size').isEnabled = False
-                inputs.itemById('user_size').isVisible = False
-        elif changed_input.id == 'browse':
+        # if changed_input.id == 'use_user_size': # Removed
+        #     if input_values['use_user_size']:
+        #         inputs.itemById('user_size').isEnabled = True
+        #         inputs.itemById('user_size').isVisible = True
+        #     else:
+        #         inputs.itemById('user_size').isEnabled = False
+        #         inputs.itemById('user_size').isVisible = False
+        if changed_input.id == 'browse':
             changed_input.value = False
             file_name = browse_for_csv()
             if len(file_name) > 0:
@@ -424,7 +423,8 @@ class QRCodeMaker(apper.Fusion360CommandBase):
         selection_input = inputs.addSelectionInput('sketch_point', "Center Point", "Pick Sketch Point for center")
         selection_input.addSelectionFilter("SketchPoints")
 
-        inputs.addValueInput('block_size', 'QR Block Size', default_units, default_block_size)
+        # Removed block_size, added qr_size
+        inputs.addValueInput('qr_size', 'QR Code Size (mm)', 'mm', adsk.core.ValueInput.createByString(QR_TARGET_SIZE_MM))
         inputs.addValueInput('block_height', 'QR Block Height', default_units, default_block_height)
         inputs.addValueInput('base_height', 'Base Height (Can be zero)', default_units, default_base_height)
 
