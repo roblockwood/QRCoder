@@ -44,6 +44,8 @@ QRCoder leverages the pyqrcode library:
 """
 import csv
 import os.path
+import os
+import tempfile
 
 import adsk.core
 import adsk.fusion
@@ -81,7 +83,7 @@ def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data)
 
     if not target_body:
         ao.ui.messageBox("No target body found.")
-        return
+        return None  # Return None if no target body
 
     parent_comp = target_body.parentComponent
 
@@ -107,6 +109,7 @@ def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data)
     new_comp.bRepBodies.add(temp_body, base_feature)
     base_feature.finishEdit()
 
+    return new_comp  # Return the newly created component
 
 
 def clear_graphics(graphics_group: adsk.fusion.CustomGraphicsGroup):
@@ -290,6 +293,25 @@ def browse_for_csv():
         return ''
 
 
+def export_step_file(component: adsk.fusion.Component):
+    ao = apper.AppObjects()
+    export_manager = ao.design.exportManager
+
+    # Get the user's Downloads directory on macOS
+    downloads_folder = os.path.expanduser("~/Downloads")
+
+    # Create a filename based on the component name in the Downloads folder
+    file_name = os.path.join(downloads_folder, f"{component.name}.step")
+
+    step_options = export_manager.createSTEPExportOptions(file_name, component)
+
+    try:
+        export_manager.execute(step_options)
+        ao.ui.messageBox(f'Successfully exported STEP file to: {file_name}')
+    except RuntimeError as error:
+        ao.ui.messageBox(f'Failed to export STEP file: {error}')
+
+
 class QRCodeMaker(apper.Fusion360CommandBase):
     def __init__(self, name: str, options: dict):
         super().__init__(name, options)
@@ -329,17 +351,29 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                 target_body = get_target_body(sketch_point)
 
                 # Updated to match new function signature
-                make_real_geometry(target_body, input_values, qr_data)
+                new_component = make_real_geometry(target_body, input_values, qr_data)
+                if new_component:
+                    export_step_file(new_component)  # Perform export during preview for immediate feedback
 
                 args.isValidResult = True
 
             self.make_preview = False
 
     def on_execute(self, command, inputs, args, input_values):
-        # sketch_point: adsk.fusion.SketchPoint = input_values['sketch_point'][0]
-        # t_body = build_qr(input_values)
-        # make_real_geometry(sketch_point.parentSketch.parentComponent, t_body)
-        pass
+        sketch_point: adsk.fusion.SketchPoint = input_values['sketch_point'][0]
+        target_body = get_target_body(sketch_point)
+        qr_data = []
+        if self.is_make_qr:
+            qr_data = make_qr_from_message(input_values)
+        else:
+            file_name = input_values['file_name']
+            if len(file_name) > 0:
+                qr_data = import_qr_from_file(file_name)
+
+        if len(qr_data) > 0:
+            new_component = make_real_geometry(target_body, input_values, qr_data)
+            if new_component:
+                export_step_file(new_component)
 
     def on_destroy(self, command, inputs, reason, input_values):
         # clear_graphics(self.graphics_group)
