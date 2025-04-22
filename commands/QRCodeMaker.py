@@ -53,10 +53,10 @@ from ..apper import apper
 from .. import config
 
 # Defaults
-BLOCK = '.5 in'
-HEIGHT = '.25 in'
-BASE = '.25 in'
-MESSAGE = 'https://tapnair.github.io/QRCoder/'
+BLOCK = '.03 in'
+HEIGHT = '.4 mm'
+BASE = '0.0 in'
+MESSAGE = 'input here'
 
 # File assumed to be in script root directory
 FILE_NAME = 'QR-17x.csv'
