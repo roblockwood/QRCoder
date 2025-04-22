@@ -53,13 +53,12 @@ from ..apper import apper
 from .. import config
 
 # Defaults
-BLOCK = '.03 in'
 HEIGHT = '.4 mm'
 BASE = '0.0 in'
 MESSAGE = 'input here'
-
-# File assumed to be in script root directory
+QR_TARGET_SIZE_MM = 24  # Target QR code size in millimeters
 FILE_NAME = 'QR-17x.csv'
+BLOCK = '.03 in'
 
 
 def get_target_body(sketch_point):
@@ -108,11 +107,12 @@ def make_graphics(t_body: adsk.fusion.BRepBody, graphics_group: adsk.fusion.Cust
     graphics_body.color = color_effect
 
 
+
 def get_qr_temp_geometry(qr_data, input_values):
-    side: float = input_values['block_size']
     height: float = input_values['block_height']
     base: float = input_values['base_height']
     sketch_point: adsk.fusion.SketchPoint = input_values['sketch_point'][0]
+    ao = apper.AppObjects() # Get app objects
 
     x_dir = sketch_point.parentSketch.xDirection
     x_dir.normalize()
@@ -122,15 +122,24 @@ def get_qr_temp_geometry(qr_data, input_values):
     z_dir.normalize()
 
     qr_size = len(qr_data)
+
+    # Calculate block size to fit within the target size
+    overall_size_mm = QR_TARGET_SIZE_MM  # in mm
+    # Use the unitsManager to convert the value.
+    overall_size = ao.units_manager.convert(overall_size_mm, 'mm', ao.units_manager.internalUnits)
+    side = overall_size / qr_size
+    input_values['block_size'] = side # update the block size
+
     middle_point = sketch_point.worldGeometry
     start_point = middle_point.copy()
 
+    # Corrected start point calculation
     x_start_move = x_dir.copy()
-    x_start_move.scaleBy((.5 * side) * (1 - qr_size))
+    x_start_move.scaleBy(-side * (qr_size / 2.0))
     start_point.translateBy(x_start_move)
 
     y_start_move = y_dir.copy()
-    y_start_move.scaleBy((.5 * side) * (qr_size - 1))
+    y_start_move.scaleBy(side * (qr_size / 2.0))
     start_point.translateBy(y_start_move)
 
     z_start_move = z_dir.copy()
@@ -176,6 +185,7 @@ def get_qr_temp_geometry(qr_data, input_values):
     return base_t_body
 
 
+
 def import_qr_from_file(file_name):
     qr_data = []
 
@@ -202,6 +212,7 @@ def build_qr_code(message, args):
         return []
 
 
+
 def make_qr_from_message(input_values):
     message: str = input_values['message']
     use_user_size: bool = input_values['use_user_size']
@@ -222,6 +233,7 @@ def make_qr_from_message(input_values):
     if success:
         qr_data = build_qr_code(message, args)
         return qr_data
+
 
 
 def add_make_inputs(inputs: adsk.core.CommandInputs):
@@ -248,6 +260,7 @@ def add_make_inputs(inputs: adsk.core.CommandInputs):
     error_items.add('M', False, '')
     error_items.add('Q', False, '')
     error_items.add('H', False, '')
+
 
 
 def add_csv_inputs(inputs: adsk.core.CommandInputs):
@@ -298,9 +311,9 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                 inputs.itemById('file_name').value = file_name
 
     def on_preview(self, command, inputs, args, input_values):
+        ao = apper.AppObjects()
+        ao.ui.messageBox("on_preview is running!")
         if self.make_preview:
-            ao = apper.AppObjects()
-
             qr_data = []
             if self.is_make_qr:
                 qr_data = make_qr_from_message(input_values)
@@ -322,18 +335,23 @@ class QRCodeMaker(apper.Fusion360CommandBase):
             self.make_preview = False
 
     def on_execute(self, command, inputs, args, input_values):
+        ao = apper.AppObjects()
+        ao.ui.messageBox("on_execute is running! REALLY running!")
         # sketch_point: adsk.fusion.SketchPoint = input_values['sketch_point'][0]
         # t_body = build_qr(input_values)
         # make_real_geometry(sketch_point.parentSketch.parentComponent, t_body)
         pass
 
     def on_destroy(self, command, inputs, reason, input_values):
+        ao = apper.AppObjects()
+        ao.ui.messageBox("on_destroy is running!")
         # clear_graphics(self.graphics_group)
         # self.graphics_group.deleteMe()
         pass
 
     def on_create(self, command, inputs):
         ao = apper.AppObjects()
+        ao.ui.messageBox("on_create is running!")
         # self.graphics_group = ao.root_comp.customGraphicsGroups.add()
         self.make_preview = True
 
@@ -355,3 +373,4 @@ class QRCodeMaker(apper.Fusion360CommandBase):
             add_make_inputs(group_input.children)
         else:
             add_csv_inputs(group_input.children)
+
