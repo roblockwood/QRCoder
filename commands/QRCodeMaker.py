@@ -73,24 +73,58 @@ def get_target_body(sketch_point):
         return None
 
 
-def make_real_geometry(target_body: adsk.fusion.BRepBody, temp_body: adsk.fusion.BRepBody):
+def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data):
+    """
+    Creates the QR code geometry in a new component.
+
+    Args:
+        target_body: The target body.
+        input_values: Input values from the command.
+        qr_data: The QR code data.
+
+    Returns:
+        The newly created component containing the QR code geometry, or None on failure.
+    """
     ao = apper.AppObjects()
+    design = ao.design
+    root_comp = design.rootComponent
 
-    if target_body is None:
-        component = ao.design.activeComponent
-    else:
-        component = target_body.parentComponent
+    if not target_body:
+        ao.ui.messageBox("No target body found.")
+        return None  # Return None if no target body
 
-    base_feature = component.features.baseFeatures.add()
+    parent_comp = target_body.parentComponent
+
+    # Create a new occurrence/component in the root
+    transform = adsk.core.Matrix3D.create()
+    new_occurrence = root_comp.occurrences.addNewComponent(transform)
+    new_comp = new_occurrence.component
+
+    # Update the component occurrence name
+    new_comp.name = input_values['message']
+
+    # Copy all bodies from the original component to the new one
+    for body in parent_comp.bRepBodies:
+        if body.isSolid:
+            body.copyToComponent(new_occurrence)
+
+    # Create the QR code temp geometry
+    temp_body = get_qr_temp_geometry(qr_data, input_values)
+
+    # Add the QR code geometry as a base feature to the new component
+    base_feature = new_comp.features.baseFeatures.add()
     base_feature.startEdit()
-    component.bRepBodies.add(temp_body, base_feature)
+    new_comp.bRepBodies.add(temp_body, base_feature)
     base_feature.finishEdit()
 
-    if target_body is not None:
-        tools = adsk.core.ObjectCollection.create()
-        tools.add(base_feature.bodies.item(0))
-        combine_input = component.features.combineFeatures.createInput(component.bRepBodies.item(0), tools)
-        component.features.combineFeatures.add(combine_input)
+    # Find the newly created body and rename it.
+    for body in new_comp.bRepBodies:
+        if body.name == "Solid1":  # Default name of the first solid body created by createBox
+            body.name = "text"
+            break
+
+    return new_comp  # Return the newly created component
+
 
 
 def clear_graphics(graphics_group: adsk.fusion.CustomGraphicsGroup):
@@ -112,7 +146,7 @@ def get_qr_temp_geometry(qr_data, input_values):
     height: float = input_values['block_height']
     base: float = input_values['base_height']
     sketch_point: adsk.fusion.SketchPoint = input_values['sketch_point'][0]
-    ao = apper.AppObjects() # Get app objects
+    ao = apper.AppObjects()
 
     x_dir = sketch_point.parentSketch.xDirection
     x_dir.normalize()
@@ -124,11 +158,10 @@ def get_qr_temp_geometry(qr_data, input_values):
     qr_size = len(qr_data)
 
     # Calculate block size to fit within the target size
-    overall_size_mm = QR_TARGET_SIZE_MM  # in mm
-    # Use the unitsManager to convert the value.
+    overall_size_mm = QR_TARGET_SIZE_MM
     overall_size = ao.units_manager.convert(overall_size_mm, 'mm', ao.units_manager.internalUnits)
     side = overall_size / qr_size
-    input_values['block_size'] = side # update the block size
+    input_values['block_size'] = side
 
     middle_point = sketch_point.worldGeometry
     start_point = middle_point.copy()
@@ -288,6 +321,27 @@ def browse_for_csv():
         return ''
 
 
+def export_step_file(component: adsk.fusion.Component):
+    ao = apper.AppObjects()
+    export_manager = ao.design.exportManager
+    step_options = export_manager.createStepOptions()
+
+    # Get the default export folder
+    default_folder = export_manager.defaultFolderPath
+
+    # Create a filename based on the component name
+    file_name = os.path.join(default_folder, f"{component.name}.step")
+    step_options.filename = file_name
+    step_options.component = component
+
+    try:
+        export_manager.execute(step_options)
+        ao.ui.messageBox(f'Successfully exported STEP file to: {file_name}')
+    except RuntimeError as error:
+        ao.ui.messageBox(f'Failed to export STEP file: {error}')
+
+
+
 class QRCodeMaker(apper.Fusion360CommandBase):
     def __init__(self, name: str, options: dict):
         super().__init__(name, options)
@@ -311,9 +365,9 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                 inputs.itemById('file_name').value = file_name
 
     def on_preview(self, command, inputs, args, input_values):
-        ao = apper.AppObjects()
-        ao.ui.messageBox("on_preview is running!")
         if self.make_preview:
+            ao = apper.AppObjects()
+
             qr_data = []
             if self.is_make_qr:
                 qr_data = make_qr_from_message(input_values)
@@ -323,35 +377,42 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                     qr_data = import_qr_from_file(file_name)
 
             if len(qr_data) > 0:
-                temp_body = get_qr_temp_geometry(qr_data, input_values)
+                sketch_point = input_values['sketch_point'][0]
+                target_body = get_target_body(sketch_point)
 
-                target_body = get_target_body(input_values['sketch_point'][0])
+                # Updated to match new function signature, and removed export
+                new_component = make_real_geometry(target_body, input_values, qr_data)
+                # if new_component:
+                #     export_step_file(new_component)  # Removed export from preview
 
-                # TODO Why is custom graphics so slow?
-                make_real_geometry(target_body, temp_body)
-                # make_graphics(t_body, self.graphics_group)
                 args.isValidResult = True
 
             self.make_preview = False
 
     def on_execute(self, command, inputs, args, input_values):
-        ao = apper.AppObjects()
-        ao.ui.messageBox("on_execute is running! REALLY running!")
-        # sketch_point: adsk.fusion.SketchPoint = input_values['sketch_point'][0]
-        # t_body = build_qr(input_values)
-        # make_real_geometry(sketch_point.parentSketch.parentComponent, t_body)
-        pass
+        sketch_point: adsk.fusion.SketchPoint = input_values['sketch_point'][0]
+        target_body = get_target_body(sketch_point)
+        qr_data = []
+        if self.is_make_qr:
+            qr_data = make_qr_from_message(input_values)
+        else:
+            file_name = input_values['file_name']
+            if len(file_name) > 0:
+                qr_data = import_qr_from_file(file_name)
+
+        if len(qr_data) > 0:
+            new_component = make_real_geometry(target_body, input_values, qr_data)
+            # if new_component:
+            #     export_step_file(new_component) # Removed export from execute
+            pass
 
     def on_destroy(self, command, inputs, reason, input_values):
-        ao = apper.AppObjects()
-        ao.ui.messageBox("on_destroy is running!")
         # clear_graphics(self.graphics_group)
         # self.graphics_group.deleteMe()
         pass
 
     def on_create(self, command, inputs):
         ao = apper.AppObjects()
-        ao.ui.messageBox("on_create is running!")
         # self.graphics_group = ao.root_comp.customGraphicsGroups.add()
         self.make_preview = True
 
@@ -373,4 +434,3 @@ class QRCodeMaker(apper.Fusion360CommandBase):
             add_make_inputs(group_input.children)
         else:
             add_csv_inputs(group_input.children)
-
