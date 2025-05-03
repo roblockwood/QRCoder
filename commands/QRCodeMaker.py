@@ -715,7 +715,8 @@ class QRCodeMaker(apper.Fusion360CommandBase):
         # Inputs for block_height and base_height removed as requested.
         # They will now use the default values defined at the top of the script.
 
-        group_input = inputs.addGroupCommandInput('group', 'QR Code Definition')
+        # Renamed the group input title here
+        group_input = inputs.addGroupCommandInput('group', 'CSV Import')
 
         # Corrected: Ensure the correct inputs are added based on is_make_qr
         if self.is_make_qr:
