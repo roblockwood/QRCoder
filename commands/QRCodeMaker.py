@@ -83,7 +83,7 @@ def get_target_body(sketch_point):
 def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data):
     """
     Creates the QR code geometry in a new component.
-    (STEP export is now handled by the 'Export STEP' button or batch process)
+    (STEP export is now handled by the 'Export STEP' button or batch process in on_execute)
 
     Args:
         target_body: The target body.
@@ -134,7 +134,7 @@ def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data)
     else:
         return None
 
-    # Removed automatic STEP export here
+    # Removed automatic STEP export from here
     # if new_comp:
     #     export_step_file(new_comp)
 
@@ -440,8 +440,15 @@ def browse_for_csv():
         return ''
 
 
-def export_step_file(component: adsk.fusion.Component):
-    """Exports a component as a STEP file to the temporary directory."""
+def export_step_file(component: adsk.fusion.Component, show_success_message: bool = False):
+    """
+    Exports a component as a STEP file to the temporary directory.
+
+    Args:
+        component: The Fusion 360 component to export.
+        show_success_message: Whether to display a success message box.
+                              Set to False for batch operations.
+    """
     ao = apper.AppObjects()
     export_manager = ao.design.exportManager
 
@@ -456,11 +463,13 @@ def export_step_file(component: adsk.fusion.Component):
 
     try:
         export_manager.execute(step_options)
-        # Inform the user where the file was saved
-        ao.ui.messageBox(f'Successfully exported STEP file to: {file_path}')
+        # Only show success message if requested
+        if show_success_message:
+            ao.ui.messageBox(f'Successfully exported STEP file to: {file_path}')
+        return True, file_path # Indicate success and return the file path
     except RuntimeError as error:
         ao.ui.messageBox(f'Failed to export STEP file: {error}')
-
+        return False, None # Indicate failure
 
 
 class QRCodeMaker(apper.Fusion360CommandBase):
@@ -542,18 +551,21 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                          'sketch_point': input_values['sketch_point']
                     }
 
-                    # Create the real component and export it
+                    # Create the real component
                     new_component = make_real_geometry(target_body, temp_input_values, qr_data)
 
-                    # export_step_file is now called inside make_real_geometry
-                    # if new_component:
-                    #    export_step_file(new_component)
+                    # --- Explicitly call export_step_file here for the button click ---
+                    if new_component:
+                       # Pass True to show the success message for single export
+                       export_step_file(new_component, show_success_message=True)
+                    # -----------------------------------------------------------------
 
                 else:
                     ao.ui.messageBox("Could not generate QR code for export.")
 
             # Reset the button state
-            changed_input.value = False
+            # Note: addButtonRowCommandInput doesn't have a value to reset like BoolValueInput
+            # changed_input.value = False # This line caused an error, removed.
         # ---------------------------------------------
 
 
@@ -588,8 +600,6 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                 # make_real_geometry is called for preview, but this creates a temporary body.
                 # The automatic export inside make_real_geometry will attempt to export this temporary body,
                 # which might not be the desired behavior.
-                # Let's modify make_real_geometry slightly or handle this in export_step_file
-                # to ensure it only exports real components.
                 # A simpler fix is to remove the automatic export from make_real_geometry entirely
                 # and handle export explicitly where needed (button click or batch execute).
                 # This is already done in the make_real_geometry function above.
@@ -607,6 +617,8 @@ class QRCodeMaker(apper.Fusion360CommandBase):
         ao = apper.AppObjects()
         design = ao.design
         generated_count = 0
+        exported_count = 0 # Counter for successfully exported STEP files
+        temp_dir_path = tempfile.gettempdir() # Get temporary directory path once
 
         # Check if we are in CSV mode and the batch trigger flag is set
         if not self.is_make_qr and self._batch_generate_triggered:
@@ -655,7 +667,10 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                             if new_component:
                                 generated_count += 1
                                 # Batch export happens here on OK click for CSV mode
-                                export_step_file(new_component)
+                                # Pass False to suppress individual success messages
+                                success, file_path = export_step_file(new_component, show_success_message=False)
+                                if success:
+                                     exported_count += 1 # Increment exported count on success
                         else:
                             ao.ui.messageBox(f"Could not generate QR code for key: {key}")
 
@@ -664,7 +679,10 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                 else:
                      ao.ui.messageBox("Error: Could not access the active design.")
 
-            ao.ui.messageBox(f"Generated {generated_count} QR codes from the CSV.")
+            # --- Consolidated message for batch export ---
+            ao.ui.messageBox(f"Generated {generated_count} QR codes from the CSV.\n"
+                             f"Exported {exported_count} .step files to: {temp_dir_path}")
+            # ---------------------------------------------
 
         # This is the original single QR creation logic for the OK button
         # It will still run if not in CSV mode OR if in CSV mode but no keys were loaded
@@ -694,6 +712,7 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                     new_component = make_real_geometry(target_body, input_values, qr_data)
 
                     # Single export is triggered by the button, not the OK button
+                    # The export is now explicitly called in the button's input_changed handler.
                     # if new_component:
                     #      export_step_file(new_component)
 
@@ -709,7 +728,7 @@ class QRCodeMaker(apper.Fusion360CommandBase):
         ao = apper.AppObjects()
         # self.graphics_group = ao.root_comp.customGraphicsGroups.add() # Create graphics group if needed
         self.make_preview = True
-        # Removed the line causing the NameError: self.is_make_qr = options.get('is_make_qr', False)
+        # is_make_qr is set in __init__, no need to set again here
         self.extracted_keys = []
         self._batch_generate_triggered = False
         # Removed _export_step flag
