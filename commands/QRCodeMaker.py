@@ -61,7 +61,7 @@ FILE_NAME = 'QR-17x.csv'
 BLOCK = '.03 in'
 
 # Flag to signal if the batch generation button was clicked
-# This flag is no longer needed with the checkbox approach.
+# This needs to be a class attribute to persist between on_input_changed and on_execute.
 
 
 def get_target_body(sketch_point):
@@ -419,8 +419,12 @@ def add_csv_inputs(inputs: adsk.core.CommandInputs):
     # Set number of rows to accommodate up to 30 keys vertically
     inputs.addTextBoxCommandInput('extracted_keys', 'Extracted Keys', '', 30, True)
 
-    # Replaced the generate button with a checkbox
-    inputs.addBoolValueInput('generate_all_checkbox', 'Generate all QR codes from CSV upon completion', False, '', False)
+    # Add the new "Generate CSV" button using addBoolValueInput and setting isButton to True
+    generate_button = inputs.addBoolValueInput('generate_csv_button', 'Generate QR Codes from CSV', False, '', False)
+    generate_button.isFullWidth = True
+    generate_button.text = 'Generate QR Codes from CSV' # Set the button text
+    generate_button.tooltip = 'Click to generate QR codes for all keys in the CSV' # Add a tooltip
+    generate_button.isButton = True # Make it behave and look like a button
 
 
 # Create file browser dialog box
@@ -472,18 +476,19 @@ class QRCodeMaker(apper.Fusion360CommandBase):
         self.make_preview = True
         self.is_make_qr = options.get('is_make_qr', False)
         self.extracted_keys = [] # Store extracted keys
-        # Removed _batch_generate_triggered flag
+        self._batch_generate_triggered = False # Flag to signal batch generation
 
 
     def on_input_changed(self, command, inputs, changed_input, input_values):
         """Handles changes to command inputs."""
         ao = apper.AppObjects()
 
-        # Always trigger preview on input change unless it's the checkbox itself
-        if changed_input.id != 'generate_all_checkbox':
+        # Only trigger preview if the changed input is NOT the generate button
+        if changed_input.id != 'generate_csv_button':
              self.make_preview = True
         else:
-             self.make_preview = False # Don't preview when the checkbox changes
+             # If the generate button was clicked, don't trigger a preview immediately
+             self.make_preview = False
 
 
         # if changed_input.id == 'use_user_size': # Removed
@@ -502,21 +507,10 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                 self.extracted_keys = read_csv_and_extract_keys(file_name)
                 # Display keys vertically
                 inputs.itemById('extracted_keys').text = '\n'.join(self.extracted_keys) if self.extracted_keys else 'No keys found or "KEY" header missing.'
-
-                # Automatically check the "Generate all" checkbox if keys were found
-                generate_all_checkbox = inputs.itemById('generate_all_checkbox')
-                if generate_all_checkbox:
-                    generate_all_checkbox.value = len(self.extracted_keys) > 0
-
             else:
                  # Clear extracted keys display if no file is selected
                  self.extracted_keys = []
                  inputs.itemById('extracted_keys').text = ''
-                 # Uncheck the "Generate all" checkbox if no file is selected
-                 generate_all_checkbox = inputs.itemById('generate_all_checkbox')
-                 if generate_all_checkbox:
-                     generate_all_checkbox.value = False
-
 
         elif changed_input.id == 'file_name':
              # Also update keys if the file name is manually changed (though input is read-only)
@@ -527,21 +521,18 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                 self.extracted_keys = read_csv_and_extract_keys(file_name)
                 # Display keys vertically
                 inputs.itemById('extracted_keys').text = '\n'.join(self.extracted_keys) if self.extracted_keys else 'No keys found or "KEY" header missing.'
-                # Automatically check the "Generate all" checkbox if keys were found
-                generate_all_checkbox = inputs.itemById('generate_all_checkbox')
-                if generate_all_checkbox:
-                    generate_all_checkbox.value = len(self.extracted_keys) > 0
             else:
                  # Clear extracted keys display if file name is cleared
                  self.extracted_keys = []
                  inputs.itemById('extracted_keys').text = ''
-                 # Uncheck the "Generate all" checkbox if file name is cleared
-                 generate_all_checkbox = inputs.itemById('generate_all_checkbox')
-                 if generate_all_checkbox:
-                     generate_all_checkbox.value = False
 
-
-        # Removed the generate_csv_button handler as it's now a checkbox
+        elif changed_input.id == 'generate_csv_button' and changed_input.value:
+            # Set the flag to indicate batch generation is triggered
+            self._batch_generate_triggered = True
+            # Reset the button state immediately
+            changed_input.value = False
+            # The command will now proceed to on_execute when the user clicks OK.
+            # No command.terminate() here.
 
 
     def on_preview(self, command, inputs, args, input_values):
@@ -605,9 +596,9 @@ class QRCodeMaker(apper.Fusion360CommandBase):
         design = ao.design
         generated_count = 0
 
-        # Check if the "Generate all" checkbox is checked
-        generate_all_checkbox = inputs.itemById('generate_all_checkbox')
-        if generate_all_checkbox and generate_all_checkbox.value:
+        # Check if the batch generate button was triggered
+        if self._batch_generate_triggered:
+            self._batch_generate_triggered = False # Reset the flag
 
             # Ensure a file is selected and keys are extracted
             if not self.extracted_keys:
@@ -629,9 +620,12 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                  ao.ui.messageBox("No target body found at the selected sketch point.")
                  return
 
-            # Loop through ALL keys in the extracted_keys list
-            if len(self.extracted_keys) > 0:
+            # Loop through keys starting from the second one
+            if len(self.extracted_keys) > 1:
                 # Removed all undo/redo group handling
+                # app = adsk.core.Application.get()
+                # try:
+                #     app.beginUndoRedoGroup("Generate QR Codes from CSV")
 
                 # Ensure design is available
                 if design:
@@ -645,7 +639,7 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                          newTimelineGroup = timelineGroups.add(start_index, start_index)
                          newTimelineGroup.name = "Generated QR Codes"
 
-                    for key in self.extracted_keys: # Loop through ALL keys
+                    for key in self.extracted_keys[1:]: # Start from the second element
                         message_to_encode = key
                         qr_data = make_qr_from_message({'message': message_to_encode})
 
@@ -672,12 +666,19 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                 else:
                      ao.ui.messageBox("Error: Could not access the active design.")
 
+                # Removed all undo/redo group ending and error handling
+                # app.endUndoRedoGroup(True)
+                # except Exception as e:
+                #     if adsk.core.Application.get().undoRedoInProgress:
+                #          adsk.core.Application.get().endUndoRedoGroup(False)
+                #     ao.ui.messageBox(f"Error during QR code generation: {e}")
+                #     generated_count = 0 # Reset count on error
 
             # Display the count of generated QR codes
             ao.ui.messageBox(f"Generated {generated_count} QR codes from the CSV.")
 
-        # If the OK button was pressed without the checkbox checked,
-        # the command simply closes, which is the desired behavior in CSV mode.
+        # If the OK button was pressed without triggering batch generate,
+        # the command simply closes, which is the desired behavior.
         # If in Make QR mode, this will execute the single QR creation.
         elif self.is_make_qr:
             # This is the original single QR creation logic for the OK button
@@ -718,7 +719,7 @@ class QRCodeMaker(apper.Fusion360CommandBase):
         ao = apper.AppObjects()
         # self.graphics_group = ao.root_comp.customGraphicsGroups.add() # Create graphics group if needed
         self.make_preview = True # Ensure preview is triggered initially
-        # Removed _batch_generate_triggered flag initialization
+        self._batch_generate_triggered = False # Reset the flag on command creation
 
         selection_input = inputs.addSelectionInput('sketch_point', "Center Point", "Pick Sketch Point for center")
         selection_input.addSelectionFilter("SketchPoints")
