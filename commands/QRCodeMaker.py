@@ -685,8 +685,8 @@ class QRCodeMaker(apper.Fusion360CommandBase):
             # Display the count of generated QR codes
             ao.ui.messageBox(f"Generated {generated_count} QR codes from the CSV.")
 
-            # Terminate the command after successful batch generation
-            command.terminate()
+            # The command will automatically terminate after on_execute completes successfully.
+            # No explicit command.terminate() is needed here.
 
         # This is the original single QR creation logic for the OK button
         # It will still run if not in CSV mode OR if in CSV mode but no keys were loaded
