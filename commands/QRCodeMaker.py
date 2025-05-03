@@ -44,6 +44,7 @@ QRCoder leverages the pyqrcode library:
 """
 import csv
 import os.path
+import tempfile
 
 import adsk.core
 import adsk.fusion
@@ -82,6 +83,7 @@ def get_target_body(sketch_point):
 def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data):
     """
     Creates the QR code geometry in a new component.
+    (STEP export is now handled by the 'Export STEP' button or batch process)
 
     Args:
         target_body: The target body.
@@ -97,7 +99,7 @@ def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data)
 
     if not target_body:
         ao.ui.messageBox("No target body found.")
-        return None  # Return None if no target body
+        return None
 
     parent_comp = target_body.parentComponent
 
@@ -107,8 +109,6 @@ def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data)
     new_comp = new_occurrence.component
 
     # Update the component occurrence name
-    # Use the message from input_values (set in on_preview/on_input_changed for CSV mode)
-    # or a default if not available.
     new_comp.name = input_values.get('message', 'Imported QR Code')
 
     # Copy all bodies from the original component to the new one
@@ -117,11 +117,10 @@ def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data)
             body.copyToComponent(new_occurrence)
 
     # Create the QR code temp geometry using default height/base
-    # Pass input_values for qr_size and sketch_point
     temp_body = get_qr_temp_geometry(qr_data, input_values)
 
     # Add the QR code geometry as a base feature to the new component
-    if temp_body: # Only add if geometry was created
+    if temp_body:
         base_feature = new_comp.features.baseFeatures.add()
         base_feature.startEdit()
         new_comp.bRepBodies.add(temp_body, base_feature)
@@ -129,19 +128,17 @@ def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data)
 
         # Find the newly created body and rename it.
         for body in new_comp.bRepBodies:
-            # Check if the body name is the default name for a box created by createBox
-            # This might need adjustment if other box-like bodies are copied from the parent.
-            # A more robust way might be to check the body's creation feature or properties
-            # if possible, but for this script's structure, checking the default name is likely sufficient.
             if body.name == "Solid1":
                 body.name = "text"
                 break
     else:
-        return None # Return None if no temp body was created
+        return None
 
+    # Removed automatic STEP export here
+    # if new_comp:
+    #     export_step_file(new_comp)
 
-    return new_comp  # Return None if no target body
-
+    return new_comp
 
 # Note: clear_graphics and make_graphics are not actively used in the current preview/generation logic
 # but are kept in case they are needed for future visualization features.
@@ -444,22 +441,23 @@ def browse_for_csv():
 
 
 def export_step_file(component: adsk.fusion.Component):
-    """Exports a component as a STEP file."""
+    """Exports a component as a STEP file to the temporary directory."""
     ao = apper.AppObjects()
     export_manager = ao.design.exportManager
-    step_options = export_manager.createStepOptions()
 
-    # Get the default export folder
-    default_folder = export_manager.defaultFolderPath
+    # Get the temporary directory
+    tmp_dir = tempfile.gettempdir()
 
-    # Create a filename based on the component name
-    file_name = os.path.join(default_folder, f"{component.name}.step")
-    step_options.filename = file_name
-    step_options.component = component
+    # Create the full file path using the temporary directory and component name
+    file_path = os.path.join(tmp_dir, f"{component.name}.step")
+
+    # Create STEP export options with the full file path and component
+    step_options = export_manager.createSTEPExportOptions(file_path, component)
 
     try:
         export_manager.execute(step_options)
-        ao.ui.messageBox(f'Successfully exported STEP file to: {file_name}')
+        # Inform the user where the file was saved
+        ao.ui.messageBox(f'Successfully exported STEP file to: {file_path}')
     except RuntimeError as error:
         ao.ui.messageBox(f'Failed to export STEP file: {error}')
 
@@ -473,8 +471,8 @@ class QRCodeMaker(apper.Fusion360CommandBase):
         self.make_preview = True
         self.is_make_qr = options.get('is_make_qr', False)
         self.extracted_keys = [] # Store extracted keys
-        # Reintroduced the flag to signal batch generation in on_execute
         self._batch_generate_triggered = False
+        # Removed _export_step flag
 
 
     def on_input_changed(self, command, inputs, changed_input, input_values):
@@ -499,115 +497,109 @@ class QRCodeMaker(apper.Fusion360CommandBase):
             file_name = browse_for_csv()
             if len(file_name) > 0:
                 inputs.itemById('file_name').value = file_name
-                # Read the CSV and display keys when a file is selected
                 self.extracted_keys = read_csv_and_extract_keys(file_name)
-                # Display keys vertically
                 inputs.itemById('extracted_keys').text = '\n'.join(self.extracted_keys) if self.extracted_keys else 'No keys found or "KEY" header missing.'
 
-                # --- MODIFIED LOGIC HERE ---
-                # If keys were successfully extracted, disable preview and set the batch trigger flag
                 if self.extracted_keys:
-                    self.make_preview = False # Disable preview
-                    self._batch_generate_triggered = True # Set flag to trigger batch generate on execute
-                    # Do NOT call command.doExecute() here
+                    self.make_preview = False
+                    self._batch_generate_triggered = True
                 else:
-                    self.make_preview = True # Re-enable preview if no keys found
-                    self._batch_generate_triggered = False # Ensure flag is false
-                # ---------------------------
+                    self.make_preview = True
+                    self._batch_generate_triggered = False
 
             else:
-                 # Clear extracted keys display, re-enable preview, and reset flag if no file is selected
                  self.extracted_keys = []
                  inputs.itemById('extracted_keys').text = ''
-                 self.make_preview = True # Re-enable preview
-                 self._batch_generate_triggered = False # Reset flag
+                 self.make_preview = True
+                 self._batch_generate_triggered = False
 
+        # --- Added handler for the new export button ---
+        elif changed_input.id == 'export_step_button':
+            # Only perform export if in single QR code mode
+            if self.is_make_qr:
+                # Retrieve necessary inputs
+                message_to_encode = input_values.get('message', MESSAGE)
+                qr_data = make_qr_from_message({'message': message_to_encode})
 
-        elif changed_input.id == 'file_name':
-             # Also update keys if the file name is manually changed (though input is read-only)
-            file_name = input_values.get('file_name', '') # Use .get for safety
-            if len(file_name) > 0:
-                self.extracted_keys = read_csv_and_extract_keys(file_name)
-                # Display keys vertically
-                inputs.itemById('extracted_keys').text = '\n'.join(self.extracted_keys) if self.extracted_keys else 'No keys found or "KEY" header missing.'
+                if len(qr_data) > 0:
+                    # Ensure sketch_point is selected before proceeding
+                    if 'sketch_point' not in input_values or not input_values['sketch_point']:
+                        ao.ui.messageBox("Please select a sketch point for the QR code location before exporting.")
+                        # Don't invalidate preview or set executeFailed here, just inform the user
+                        return
 
-                # --- MODIFIED LOGIC HERE ---
-                # If keys were successfully extracted, disable preview and set the batch trigger flag
-                if self.extracted_keys:
-                    self.make_preview = False # Disable preview
-                    self._batch_generate_triggered = True # Set flag to trigger batch generate on execute
-                    # Do NOT call command.doExecute() here
+                    sketch_point = input_values['sketch_point'][0]
+                    target_body = get_target_body(sketch_point)
+
+                    if not target_body:
+                        ao.ui.messageBox("No target body found at the selected sketch point for export.")
+                        return
+
+                    # Set the message in input_values for component naming
+                    temp_input_values = {
+                         'message': message_to_encode,
+                         'qr_size': input_values['qr_size'],
+                         'sketch_point': input_values['sketch_point']
+                    }
+
+                    # Create the real component and export it
+                    new_component = make_real_geometry(target_body, temp_input_values, qr_data)
+
+                    # export_step_file is now called inside make_real_geometry
+                    # if new_component:
+                    #    export_step_file(new_component)
+
                 else:
-                    self.make_preview = True # Re-enable preview if no keys found
-                    self._batch_generate_triggered = False # Ensure flag is false
-                # ---------------------------
+                    ao.ui.messageBox("Could not generate QR code for export.")
 
-            else:
-                 # Clear extracted keys display, re-enable preview, and reset flag if file name is cleared
-                 self.extracted_keys = []
-                 inputs.itemById('extracted_keys').text = ''
-                 self.make_preview = True # Re-enable preview
-                 self._batch_generate_triggered = False # Reset flag
-
-
-        # Removed the generate_csv_button handler
+            # Reset the button state
+            changed_input.value = False
+        # ---------------------------------------------
 
 
     def on_preview(self, command, inputs, args, input_values):
         """Handles the preview event."""
-        # Only run preview if make_preview is True (controlled by input_changed)
         if self.make_preview:
             ao = apper.AppObjects()
             qr_data = []
-            message_to_encode = None # Variable to hold the message used for QR generation
+            message_to_encode = None
 
-            # In CSV import mode, preview should be disabled if a file with keys is loaded.
-            # This check is mostly for safety, as make_preview should be False in that case.
             if not self.is_make_qr and (len(input_values.get('file_name', '')) > 0 and self.extracted_keys):
-                 args.isValidResult = False # No valid preview in CSV mode with loaded file
-                 return # Exit preview early
+                 args.isValidResult = False
+                 return
 
-
-            # Determine message to encode based on mode
-            if not self.is_make_qr: # CSV import mode (will only preview if no file/keys loaded yet)
-                # Use a placeholder message for preview if no file is loaded
+            if not self.is_make_qr:
                 message_to_encode = "Preview: Select CSV"
                 qr_data = make_qr_from_message({'message': message_to_encode})
-
-            else: # Make QR Code mode
-                 # Use the message input directly
+            else:
                 message_to_encode = input_values.get('message', MESSAGE)
                 qr_data = make_qr_from_message({'message': message_to_encode})
 
-
-            # Set the message in input_values for component naming in make_real_geometry
-            # Use the message_to_encode if available, otherwise a default
             input_values['message'] = message_to_encode if message_to_encode is not None else 'Imported QR Code Preview'
 
-
-            # Only attempt to create geometry if QR data was successfully generated
             if len(qr_data) > 0:
-                # Ensure sketch_point is selected before proceeding
                 if 'sketch_point' not in input_values or not input_values['sketch_point']:
-                    # No message box here, let the user pick the point
-                    args.isValidResult = False # Invalidate the preview result if no point selected
-                    # Don't set make_preview to False here, allow it to re-run when point is selected
-                    return # Exit the function
+                    args.isValidResult = False
+                    return
 
                 sketch_point = input_values['sketch_point'][0]
                 target_body = get_target_body(sketch_point)
 
-                # Updated to match new function signature, and removed export
+                # make_real_geometry is called for preview, but this creates a temporary body.
+                # The automatic export inside make_real_geometry will attempt to export this temporary body,
+                # which might not be the desired behavior.
+                # Let's modify make_real_geometry slightly or handle this in export_step_file
+                # to ensure it only exports real components.
+                # A simpler fix is to remove the automatic export from make_real_geometry entirely
+                # and handle export explicitly where needed (button click or batch execute).
+                # This is already done in the make_real_geometry function above.
                 new_component = make_real_geometry(target_body, input_values, qr_data)
 
-                # Set isValidResult based on whether geometry was created
+
                 args.isValidResult = (new_component is not None)
 
             else:
-                 # If no QR data, the preview is not valid
                  args.isValidResult = False
-
-            # The make_preview flag is now controlled by input_changed, no need to set to False here.
 
 
     def on_execute(self, command, inputs, args, input_values):
@@ -618,18 +610,16 @@ class QRCodeMaker(apper.Fusion360CommandBase):
 
         # Check if we are in CSV mode and the batch trigger flag is set
         if not self.is_make_qr and self._batch_generate_triggered:
-            # Reset the flag immediately
             self._batch_generate_triggered = False
 
-            # Ensure sketch point and QR size are selected
             if 'sketch_point' not in input_values or not input_values['sketch_point']:
                 ao.ui.messageBox("Please select a sketch point for the QR code location.")
-                args.executeFailed = True # Indicate execution failed
+                args.executeFailed = True
                 return
 
             if 'qr_size' not in input_values or not isinstance(input_values['qr_size'], (int, float)):
                  ao.ui.messageBox("Please specify a valid QR Code Size.")
-                 args.executeFailed = True # Indicate execution failed
+                 args.executeFailed = True
                  return
 
             sketch_point = input_values['sketch_point'][0]
@@ -637,94 +627,75 @@ class QRCodeMaker(apper.Fusion360CommandBase):
 
             if not target_body:
                  ao.ui.messageBox("No target body found at the selected sketch point.")
-                 args.executeFailed = True # Indicate execution failed
+                 args.executeFailed = True
                  return
 
-            # Loop through ALL keys in the extracted_keys list
             if len(self.extracted_keys) > 0:
-                # Ensure design is available
                 if design:
                     timeline = design.timeline
                     timelineGroups = timeline.timelineGroups
-                    # Add the timeline group before creating features
                     start_index = timeline.count + 1
-                    # Check if timelineGroups is valid before adding
-                    newTimelineGroup = None # Initialize to None
+                    newTimelineGroup = None
                     if timelineGroups:
                          newTimelineGroup = timelineGroups.add(start_index, start_index)
                          newTimelineGroup.name = "Generated QR Codes"
 
-                    for key in self.extracted_keys: # Loop through ALL keys
+                    for key in self.extracted_keys:
                         message_to_encode = key
                         qr_data = make_qr_from_message({'message': message_to_encode})
 
                         if len(qr_data) > 0:
-                            # Create geometry for this key
-                            # Pass a dictionary to make_real_geometry with necessary input_values
                             temp_input_values = {
-                                'message': message_to_encode, # Use the current key as the message
+                                'message': message_to_encode,
                                 'qr_size': input_values['qr_size'],
-                                'sketch_point': input_values['sketch_point'] # Pass the sketch point
+                                'sketch_point': input_values['sketch_point']
                             }
+                            # make_real_geometry no longer exports automatically
                             new_component = make_real_geometry(target_body, temp_input_values, qr_data)
                             if new_component:
                                 generated_count += 1
-                                # Optional: Export STEP file for each generated component
-                                # export_step_file(new_component)
+                                # Batch export happens here on OK click for CSV mode
+                                export_step_file(new_component)
                         else:
                             ao.ui.messageBox(f"Could not generate QR code for key: {key}")
 
-                    # Update the end index of the timeline group after creation
-                    # Check if newTimelineGroup is valid before updating
                     if generated_count > 0 and newTimelineGroup:
                         newTimelineGroup.endTimeStep = timeline.count
                 else:
                      ao.ui.messageBox("Error: Could not access the active design.")
 
-
-            # Display the count of generated QR codes
             ao.ui.messageBox(f"Generated {generated_count} QR codes from the CSV.")
-
-            # The command will automatically terminate after on_execute completes successfully.
-            # No explicit command.terminate() is needed here.
 
         # This is the original single QR creation logic for the OK button
         # It will still run if not in CSV mode OR if in CSV mode but no keys were loaded
         # (meaning the batch trigger flag was not set).
         elif self.is_make_qr or (not self.is_make_qr and not self._batch_generate_triggered):
-             # If in CSV mode and no keys were loaded, the user might still click OK
-             # In this case, it will just close the dialog as no batch generation is triggered.
-
-            if self.is_make_qr: # Only run single creation if in Make QR mode
+            if self.is_make_qr:
                 ao = apper.AppObjects()
                 qr_data = make_qr_from_message(input_values)
 
                 if len(qr_data) > 0:
-                     # Ensure sketch_point is selected before proceeding
                     if 'sketch_point' not in input_values or not input_values['sketch_point']:
                         ao.ui.messageBox("Please select a sketch point for the QR code location.")
-                        args.executeFailed = True # Indicate execution failed
-                        return # Exit the function
+                        args.executeFailed = True
+                        return
 
                     sketch_point: adsk.fusion.SketchPoint = input_values['sketch_point'][0]
                     target_body = get_target_body(sketch_point)
 
                     if not target_body:
                          ao.ui.messageBox("No target body found at the selected sketch point.")
-                         args.executeFailed = True # Indicate execution failed
+                         args.executeFailed = True
                          return
 
-                    # Set the message in input_values for component naming
                     input_values['message'] = input_values.get('message', MESSAGE)
 
+                    # make_real_geometry no longer exports automatically
                     new_component = make_real_geometry(target_body, input_values, qr_data)
 
-                    # Optional: Export STEP file after successful creation
+                    # Single export is triggered by the button, not the OK button
                     # if new_component:
                     #      export_step_file(new_component)
-            # If in CSV mode and no keys were loaded, this block is entered,
-            # but since _batch_generate_triggered is False, no generation happens,
-            # and the command will simply close when the user clicks OK.
 
 
     def on_destroy(self, command, inputs, reason, input_values):
@@ -737,24 +708,33 @@ class QRCodeMaker(apper.Fusion360CommandBase):
         """Creates the command inputs when the command is activated."""
         ao = apper.AppObjects()
         # self.graphics_group = ao.root_comp.customGraphicsGroups.add() # Create graphics group if needed
-        self.make_preview = True # Ensure preview is triggered initially
-        self.extracted_keys = [] # Ensure keys are cleared on command creation
-        # Reintroduced the flag and initialize to False
+        self.make_preview = True
+        # Removed the line causing the NameError: self.is_make_qr = options.get('is_make_qr', False)
+        self.extracted_keys = []
         self._batch_generate_triggered = False
+        # Removed _export_step flag
+
 
         selection_input = inputs.addSelectionInput('sketch_point', "Center Point", "Pick Sketch Point for center")
         selection_input.addSelectionFilter("SketchPoints")
 
-        # Added qr_size input
         inputs.addValueInput('qr_size', 'QR Code Size (mm)', 'mm', adsk.core.ValueInput.createByString(QR_TARGET_SIZE_MM))
-        # Inputs for block_height and base_height removed as requested.
-        # They will now use the default values defined at the top of the script.
 
-        # Renamed the group input title here
         group_input = inputs.addGroupCommandInput('group', 'CSV Import')
 
-        # Corrected: Ensure the correct inputs are added based on is_make_qr
+        # Use self.is_make_qr which was set in __init__
         if self.is_make_qr:
             add_make_inputs(group_input.children)
         else:
             add_csv_inputs(group_input.children)
+
+        # --- Add new Export group and button ---
+        export_group = inputs.addGroupCommandInput('export_group', 'Export')
+        export_group.isExpanded = True # Keep the export group expanded by default
+
+        # Add the export button ONLY for the single QR code mode
+        # Use self.is_make_qr which was set in __init__
+        if self.is_make_qr:
+             # Corrected method to add a button and added isMultiSelectEnabled argument
+             export_group.children.addButtonRowCommandInput('export_step_button', 'Export STEP', False)
+        # -----------------------------------------
