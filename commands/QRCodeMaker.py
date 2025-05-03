@@ -409,6 +409,9 @@ def add_make_inputs(inputs: adsk.core.CommandInputs):
 
 def add_csv_inputs(inputs: adsk.core.CommandInputs):
     """Adds inputs for importing QR codes from a CSV file."""
+    # Add the new "Generate CSV" button using addBoolValueInput and setting isButton to True
+    inputs.addBoolValueInput('generate_csv_button', 'Generate QR Codes from CSV', False, '', False)
+
     file_name_input = inputs.addStringValueInput('file_name', "File to import", '')
     file_name_input.isReadOnly = True # Make the file name input read-only
 
@@ -418,9 +421,6 @@ def add_csv_inputs(inputs: adsk.core.CommandInputs):
     # Add a read-only text box to display the extracted keys
     # Set number of rows to accommodate up to 30 keys vertically
     inputs.addTextBoxCommandInput('extracted_keys', 'Extracted Keys', '', 30, True)
-
-    # Add the new "Generate CSV" button using addBoolValueInput and setting isButton to True
-    inputs.addBoolValueInput('generate_csv_button', 'Generate QR Codes from CSV', False, '', False)
 
 
 # Create file browser dialog box
@@ -503,10 +503,21 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                 self.extracted_keys = read_csv_and_extract_keys(file_name)
                 # Display keys vertically
                 inputs.itemById('extracted_keys').text = '\n'.join(self.extracted_keys) if self.extracted_keys else 'No keys found or "KEY" header missing.'
+
+                # --- MODIFIED LOGIC HERE ---
+                # Set the batch generate flag if keys were successfully extracted
+                if self.extracted_keys:
+                    self._batch_generate_triggered = True
+                else:
+                    self._batch_generate_triggered = False # Ensure flag is false if no keys found
+                # ---------------------------
+
             else:
-                 # Clear extracted keys display if no file is selected
+                 # Clear extracted keys display and reset flag if no file is selected
                  self.extracted_keys = []
                  inputs.itemById('extracted_keys').text = ''
+                 self._batch_generate_triggered = False # Reset flag
+
 
         elif changed_input.id == 'file_name':
              # Also update keys if the file name is manually changed (though input is read-only)
@@ -517,18 +528,32 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                 self.extracted_keys = read_csv_and_extract_keys(file_name)
                 # Display keys vertically
                 inputs.itemById('extracted_keys').text = '\n'.join(self.extracted_keys) if self.extracted_keys else 'No keys found or "KEY" header missing.'
+
+                # --- MODIFIED LOGIC HERE ---
+                # Set the batch generate flag if keys were successfully extracted
+                if self.extracted_keys:
+                    self._batch_generate_triggered = True
+                else:
+                    self._batch_generate_triggered = False # Ensure flag is false if no keys found
+                # ---------------------------
+
             else:
-                 # Clear extracted keys display if file name is cleared
+                 # Clear extracted keys display and reset flag if file name is cleared
                  self.extracted_keys = []
                  inputs.itemById('extracted_keys').text = ''
+                 self._batch_generate_triggered = False # Reset flag
 
-        elif changed_input.id == 'generate_csv_button' and changed_input.value:
-            # Set the flag to indicate batch generation is triggered
-            self._batch_generate_triggered = True
-            # Reset the button state immediately
-            changed_input.value = False
-            # The command will now proceed to on_execute when the user clicks OK.
-            # No command.terminate() here.
+
+        # --- REMOVED LOGIC FROM HERE ---
+        # The logic to set _batch_generate_triggered is moved to the 'browse' and 'file_name' handlers
+        # elif changed_input.id == 'generate_csv_button' and changed_input.value:
+        #     # Set the flag to indicate batch generation is triggered
+        #     self._batch_generate_triggered = True
+        #     # Reset the button state immediately
+        #     changed_input.value = False
+        #     # The command will now proceed to on_execute when the user clicks OK.
+        #     # No command.terminate() here.
+        # -------------------------------
 
 
     def on_preview(self, command, inputs, args, input_values):
