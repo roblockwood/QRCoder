@@ -101,7 +101,9 @@ def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data)
     new_comp = new_occurrence.component
 
     # Update the component occurrence name
-    new_comp.name = input_values['message']
+    # Use the message from input_values (set in on_preview/on_execute for CSV mode)
+    # or a default if not available.
+    new_comp.name = input_values.get('message', 'Imported QR Code')
 
     # Copy all bodies from the original component to the new one
     for body in parent_comp.bRepBodies:
@@ -120,7 +122,11 @@ def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data)
 
     # Find the newly created body and rename it.
     for body in new_comp.bRepBodies:
-        if body.name == "Solid1":  # Default name of the first solid body created by createBox
+        # Check if the body name is the default name for a box created by createBox
+        # This might need adjustment if other box-like bodies are copied from the parent.
+        # A more robust way might be to check the body's creation feature or properties
+        # if possible, but for this script's structure, checking the default name is likely sufficient.
+        if body.name == "Solid1":
             body.name = "text"
             break
 
@@ -129,14 +135,18 @@ def make_real_geometry(target_body: adsk.fusion.BRepBody, input_values, qr_data)
 
 
 def clear_graphics(graphics_group: adsk.fusion.CustomGraphicsGroup):
-    for entity in graphics_group:
+    """Clears all custom graphics from a group."""
+    # Iterate through the group in reverse order to avoid issues with deleted items
+    for i in range(graphics_group.count - 1, -1, -1):
+        entity = graphics_group.item(i)
         if entity.isValid:
             entity.deleteMe()
 
 
 def make_graphics(t_body: adsk.fusion.BRepBody, graphics_group: adsk.fusion.CustomGraphicsGroup):
+    """Creates custom graphics for a temporary body."""
     clear_graphics(graphics_group)
-    color = adsk.core.Color.create(250, 162, 27, 255)
+    color = adsk.core.Color.create(250, 162, 27, 255) # Example color (Orange)
     color_effect = adsk.fusion.CustomGraphicsSolidColorEffect.create(color)
     graphics_body = graphics_group.addBRepBody(t_body)
     graphics_body.color = color_effect
@@ -144,6 +154,16 @@ def make_graphics(t_body: adsk.fusion.BRepBody, graphics_group: adsk.fusion.Cust
 
 
 def get_qr_temp_geometry(qr_data, input_values):
+    """
+    Creates temporary BRep geometry for the QR code based on the QR data.
+
+    Args:
+        qr_data: A list of lists containing '0' or '1' characters representing the QR code modules.
+        input_values: Input values from the command, including 'qr_size' and 'sketch_point'.
+
+    Returns:
+        A temporary BRepBody representing the QR code geometry.
+    """
     # Use default height and base instead of input_values
     ao = apper.AppObjects()
     units_manager = ao.units_manager
@@ -152,20 +172,43 @@ def get_qr_temp_geometry(qr_data, input_values):
     height: float = units_manager.evaluateExpression(HEIGHT, units_manager.defaultLengthUnits)
     base: float = units_manager.evaluateExpression(BASE, units_manager.defaultLengthUnits)
 
+    # Ensure sketch_point is valid before accessing its properties
+    if 'sketch_point' not in input_values or not input_values['sketch_point']:
+        ao.ui.messageBox("Error: Sketch point not selected.")
+        return None
+
     sketch_point: adsk.fusion.SketchPoint = input_values['sketch_point'][0]
+
+    # Ensure the parent sketch and its directions are valid
+    if not sketch_point.parentSketch or not sketch_point.parentSketch.xDirection or not sketch_point.parentSketch.yDirection:
+         ao.ui.messageBox("Error: Invalid sketch associated with the selected point.")
+         return None
+
 
     x_dir = sketch_point.parentSketch.xDirection
     x_dir.normalize()
     y_dir = sketch_point.parentSketch.yDirection
     y_dir.normalize()
-    z_dir = x_dir.crossProduct(y_dir)
+    z_dir = x_dir.copy() # Create a copy before cross product
+    z_dir.crossProduct(y_dir)
     z_dir.normalize()
 
     qr_size = len(qr_data)
+    if qr_size == 0:
+        return None # Return None if no QR data
 
     # Calculate block size from the overall size and qr_size
+    # Ensure 'qr_size' is in input_values and is a valid number
+    if 'qr_size' not in input_values or not isinstance(input_values['qr_size'], (int, float)):
+         ao.ui.messageBox("Error: Invalid QR Code Size input.")
+         return None
+
     overall_size: float = input_values['qr_size']
-    side = overall_size / qr_size
+    if qr_size > 0:
+        side = overall_size / qr_size
+    else:
+        side = 0 # Avoid division by zero if qr_size is 0
+
     input_values['block_size'] = side # store block size
 
     middle_point = sketch_point.worldGeometry
@@ -191,67 +234,114 @@ def get_qr_temp_geometry(qr_data, input_values):
 
     b_mgr = adsk.fusion.TemporaryBRepManager.get()
 
-    has_base = True
-    if base > 0:
+    base_t_body = None
+    has_base = (base > 0)
+    if has_base:
         full_size = side * qr_size
         base_t_box = adsk.core.OrientedBoundingBox3D.create(base_point, x_dir, y_dir, full_size, full_size, base)
         base_t_body = b_mgr.createBox(base_t_box)
-    else:
-        has_base = False
 
+    # Build the QR code blocks
     for i, row in enumerate(qr_data):
         for j, col in enumerate(row):
-            if int(col) == 1:
+            # Ensure col is a string before checking and converting
+            if isinstance(col, str) and col == '1':
                 x_move = x_dir.copy()
                 y_move = y_dir.copy()
                 x_move.scaleBy(j * side)
-                y_move.scaleBy(-1 * i * side)
+                y_move.scaleBy(-1 * i * side) # QR codes are typically rendered top-down
 
                 c_point = start_point.copy()
                 c_point.translateBy(x_move)
                 c_point.translateBy(y_move)
 
+                # Create a box for the QR module
                 b_box = adsk.core.OrientedBoundingBox3D.create(c_point, x_dir, y_dir, side, side, height + base)
                 t_body = b_mgr.createBox(b_box)
 
-                if not has_base:
+                if base_t_body is None:
                     base_t_body = t_body
-                    has_base = True
                 else:
+                    # Perform boolean union with the base body or previous blocks
                     b_mgr.booleanOperation(base_t_body, t_body, adsk.fusion.BooleanTypes.UnionBooleanType)
 
     return base_t_body
 
 
+def read_csv_and_extract_keys(file_path):
+    """Reads a CSV file and extracts values from the 'KEY' column."""
+    keys = []
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, newline='') as f:
+                reader = csv.DictReader(f)
+                if 'KEY' in reader.fieldnames:
+                    for row in reader:
+                        # Append the key value as a string
+                        keys.append(str(row.get('KEY', ''))) # Use .get with default for safety
+                else:
+                    ao = apper.AppObjects()
+                    ao.ui.messageBox("CSV file does not contain a 'KEY' header.")
+        except Exception as e:
+            ao = apper.AppObjects()
+            ao.ui.messageBox(f"Error reading CSV file: {e}")
+    return keys
+
 
 def import_qr_from_file(file_name):
+    """
+    This function is currently not used in the updated logic,
+    as QR data is generated from a key extracted from the CSV.
+    It remains here in case future functionality requires reading
+    a CSV that directly defines a QR pattern.
+    """
     qr_data = []
 
     if os.path.exists(file_name):
-        with open(file_name, newline='') as f:
-            reader = csv.reader(f)
-            qr_data = list(reader)
+        try:
+            with open(file_name, newline='') as f:
+                reader = csv.reader(f)
+                # Assuming the CSV contains rows of '0' and '1' characters
+                qr_data = [row for row in reader if row] # Read all rows, filtering empty ones
+        except Exception as e:
+             ao = apper.AppObjects()
+             ao.ui.messageBox(f"Error reading QR pattern from CSV file: {e}")
+
 
     return qr_data
 
 
 @apper.lib_import(config.lib_path)
 def build_qr_code(message, args):
+    """Builds QR code data (list of lists of '0'/'1' strings) from a message."""
     import pyqrcode
     try:
-        qr = pyqrcode.create(message, **args)
+        # Ensure message is a string
+        message_str = str(message)
+        qr = pyqrcode.create(message_str, **args)
         qr_text = qr.text(quiet_zone=0)
+        # Split into lines, strip whitespace, filter empty lines, then split each line into characters
         qr_data = [[char for char in y] for y in (x.strip() for x in qr_text.splitlines()) if y]
         return qr_data
 
     except ValueError as e:
         ao = apper.AppObjects()
-        ao.ui.messageBox(f'Problem with inputs: {e}')
+        ao.ui.messageBox(f'Problem generating QR code from message: {e}')
+        return []
+    except Exception as e:
+        ao = apper.AppObjects()
+        ao.ui.messageBox(f'An unexpected error occurred during QR code generation: {e}')
         return []
 
 
-
 def make_qr_from_message(input_values):
+    """Generates QR code data from the 'message' input value."""
+    # Ensure 'message' is in input_values
+    if 'message' not in input_values:
+        ao = apper.AppObjects()
+        ao.ui.messageBox("Error: 'message' input value is missing.")
+        return []
+
     message: str = input_values['message']
     # use_user_size: bool = input_values['use_user_size'] # Removed
     # user_size: int = input_values['user_size'] # Removed
@@ -266,15 +356,20 @@ def make_qr_from_message(input_values):
     # if error_type != 'Automatic': # Removed
     #     args['error'] = error_type
 
+    # Check for pyqrcode dependency before building
     success = apper.check_dependency('pyqrcode', config.lib_path)
 
     if success:
         qr_data = build_qr_code(message, args)
         return qr_data
-
+    else:
+        ao = apper.AppObjects()
+        ao.ui.messageBox("Error: 'pyqrcode' library not found. Please ensure it is installed.")
+        return []
 
 
 def add_make_inputs(inputs: adsk.core.CommandInputs):
+    """Adds inputs for creating a QR code from a message."""
     drop_style = adsk.core.DropDownStyles.TextListDropDownStyle
     inputs.addStringValueInput('message', 'Value to encode', MESSAGE)
     # inputs.addBoolValueInput('use_user_size', 'Specify size?', True, '', False) # Removed
@@ -301,15 +396,21 @@ def add_make_inputs(inputs: adsk.core.CommandInputs):
 
 
 def add_csv_inputs(inputs: adsk.core.CommandInputs):
-    inputs.addStringValueInput('file_name', "File to import", '')
+    """Adds inputs for importing QR codes from a CSV file."""
+    file_name_input = inputs.addStringValueInput('file_name', "File to import", '')
+    file_name_input.isReadOnly = True # Make the file name input read-only
 
     browse_button = inputs.addBoolValueInput('browse', 'Browse', False, '', False)
     browse_button.isFullWidth = True
 
+    # Add a read-only text box to display the extracted keys
+    # Set number of rows to accommodate up to 30 keys vertically
+    inputs.addTextBoxCommandInput('extracted_keys', 'Extracted Keys', '', 30, True)
 
 
 # Create file browser dialog box
 def browse_for_csv():
+    """Opens a file dialog for selecting a CSV file."""
     ao = apper.AppObjects()
 
     file_dialog = ao.ui.createFileDialog()
@@ -327,6 +428,7 @@ def browse_for_csv():
 
 
 def export_step_file(component: adsk.fusion.Component):
+    """Exports a component as a STEP file."""
     ao = apper.AppObjects()
     export_manager = ao.design.exportManager
     step_options = export_manager.createStepOptions()
@@ -348,14 +450,18 @@ def export_step_file(component: adsk.fusion.Component):
 
 
 class QRCodeMaker(apper.Fusion360CommandBase):
+    """Fusion 360 Command for creating QR codes from message or CSV."""
     def __init__(self, name: str, options: dict):
         super().__init__(name, options)
-        # self.graphics_group = None
+        # self.graphics_group = None # Initialize graphics group if needed for preview graphics
         self.make_preview = True
         self.is_make_qr = options.get('is_make_qr', False)
+        self.extracted_keys = [] # Store extracted keys
+
 
     def on_input_changed(self, command, inputs, changed_input, input_values):
-        self.make_preview = True
+        """Handles changes to command inputs."""
+        self.make_preview = True # Always trigger preview on input change
         # if changed_input.id == 'use_user_size': # Removed
         #     if input_values['use_user_size']:
         #         inputs.itemById('user_size').isEnabled = True
@@ -364,67 +470,151 @@ class QRCodeMaker(apper.Fusion360CommandBase):
         #         inputs.itemById('user_size').isEnabled = False
         #         inputs.itemById('user_size').isVisible = False
         if changed_input.id == 'browse':
-            changed_input.value = False
+            changed_input.value = False # Reset browse button state
             file_name = browse_for_csv()
             if len(file_name) > 0:
                 inputs.itemById('file_name').value = file_name
+                # Read the CSV and display keys when a file is selected
+                self.extracted_keys = read_csv_and_extract_keys(file_name)
+                # Display keys vertically
+                inputs.itemById('extracted_keys').text = '\n'.join(self.extracted_keys) if self.extracted_keys else 'No keys found or "KEY" header missing.'
+            else:
+                 # Clear extracted keys display if no file is selected
+                 self.extracted_keys = []
+                 inputs.itemById('extracted_keys').text = ''
+
+        elif changed_input.id == 'file_name':
+             # Also update keys if the file name is manually changed (though input is read-only)
+             # This part might be less relevant now that the input is read-only,
+             # but keeping it doesn't hurt.
+            file_name = input_values.get('file_name', '') # Use .get for safety
+            if len(file_name) > 0:
+                self.extracted_keys = read_csv_and_extract_keys(file_name)
+                # Display keys vertically
+                inputs.itemById('extracted_keys').text = '\n'.join(self.extracted_keys) if self.extracted_keys else 'No keys found or "KEY" header missing.'
+            else:
+                 # Clear extracted keys display if file name is cleared
+                 self.extracted_keys = []
+                 inputs.itemById('extracted_keys').text = ''
+
 
     def on_preview(self, command, inputs, args, input_values):
+        """Handles the preview event."""
         if self.make_preview:
             ao = apper.AppObjects()
-
             qr_data = []
-            if self.is_make_qr:
-                qr_data = make_qr_from_message(input_values)
-            else:
-                file_name = input_values['file_name']
-                if len(file_name) > 0:
-                    qr_data = import_qr_from_file(file_name)
+            message_to_encode = None # Variable to hold the message used for QR generation
 
+            if self.is_make_qr:
+                # Use the message input directly in 'Make QR Code' mode
+                message_to_encode = input_values.get('message', MESSAGE)
+                qr_data = make_qr_from_message({'message': message_to_encode})
+            else: # CSV import mode
+                file_name = input_values.get('file_name', '')
+                if len(file_name) > 0:
+                    # Use the stored extracted keys
+                    if self.extracted_keys: # Check if the list of keys is not empty
+                        message_to_encode = self.extracted_keys[0] # Use the first key as the message
+                        qr_data = make_qr_from_message({'message': message_to_encode})
+                    else:
+                         ao.ui.messageBox("No keys found in the selected CSV file to generate QR code.")
+                else:
+                    ao.ui.messageBox("No CSV file selected to generate QR code.")
+
+            # Set the message in input_values for component naming in make_real_geometry
+            # Use the message_to_encode if available, otherwise a default
+            input_values['message'] = message_to_encode if message_to_encode is not None else 'Imported QR Code Preview'
+
+
+            # Only attempt to create geometry if QR data was successfully generated
             if len(qr_data) > 0:
+                # Ensure sketch_point is selected before proceeding
+                if 'sketch_point' not in input_values or not input_values['sketch_point']:
+                    ao.ui.messageBox("Please select a sketch point for the QR code location.")
+                    args.isValidResult = False # Invalidate the preview result if no point selected
+                    self.make_preview = False # Prevent repeated attempts
+                    return # Exit the function
+
                 sketch_point = input_values['sketch_point'][0]
                 target_body = get_target_body(sketch_point)
 
                 # Updated to match new function signature, and removed export
                 new_component = make_real_geometry(target_body, input_values, qr_data)
-                # if new_component:
-                #     export_step_file(new_component)  # Removed export from preview
 
-                args.isValidResult = True
+                # Set isValidResult based on whether geometry was created
+                args.isValidResult = (new_component is not None)
 
-            self.make_preview = False
+            else:
+                 # If no QR data, the preview is not valid
+                 args.isValidResult = False
+
+
+            self.make_preview = False # Set to False after attempting preview
+
 
     def on_execute(self, command, inputs, args, input_values):
-        sketch_point: adsk.fusion.SketchPoint = input_values['sketch_point'][0]
-        target_body = get_target_body(sketch_point)
+        """Handles the execute event."""
+        ao = apper.AppObjects()
         qr_data = []
-        if self.is_make_qr:
-            qr_data = make_qr_from_message(input_values)
-        else:
-            file_name = input_values['file_name']
-            if len(file_name) > 0:
-                qr_data = import_qr_from_file(file_name)
+        message_to_encode = None # Variable to hold the message used for QR generation
 
+
+        if self.is_make_qr:
+            # Use the message input directly in 'Make QR Code' mode
+            message_to_encode = input_values.get('message', MESSAGE)
+            qr_data = make_qr_from_message({'message': message_to_encode})
+        else: # CSV import mode
+            file_name = input_values.get('file_name', '')
+            if len(file_name) > 0:
+                 # Use the stored extracted keys
+                if self.extracted_keys: # Check if the list of keys is not empty
+                    message_to_encode = self.extracted_keys[0] # Use the first key as the message
+                    qr_data = make_qr_from_message({'message': message_to_encode})
+                else:
+                    ao.ui.messageBox("No keys found in the selected CSV file to generate QR code.")
+            else:
+                ao.ui.messageBox("No CSV file selected to generate QR code.")
+
+        # Set the message in input_values for component naming in make_real_geometry
+        # Use the message_to_encode if available, otherwise a default
+        input_values['message'] = message_to_encode if message_to_encode is not None else 'Imported QR Code'
+
+
+        # Only attempt to create geometry if QR data was successfully generated
         if len(qr_data) > 0:
+             # Ensure sketch_point is selected before proceeding
+            if 'sketch_point' not in input_values or not input_values['sketch_point']:
+                ao.ui.messageBox("Please select a sketch point for the QR code location.")
+                return # Exit the function
+
+            sketch_point: adsk.fusion.SketchPoint = input_values['sketch_point'][0]
+            target_body = get_target_body(sketch_point)
+
             new_component = make_real_geometry(target_body, input_values, qr_data)
+
+            # Optional: Export STEP file after successful creation
             # if new_component:
-            #     export_step_file(new_component) # Removed export from execute
-            pass
+            #      export_step_file(new_component)
+
+        # No explicit return needed for execute
+
 
     def on_destroy(self, command, inputs, reason, input_values):
-        # clear_graphics(self.graphics_group)
-        # self.graphics_group.deleteMe()
+        """Cleans up resources when the command is destroyed."""
+        # clear_graphics(self.graphics_group) # Clear graphics if used for preview
+        # self.graphics_group.deleteMe() # Delete graphics group if created
         pass
 
     def on_create(self, command, inputs):
+        """Creates the command inputs when the command is activated."""
         ao = apper.AppObjects()
-        # self.graphics_group = ao.root_comp.customGraphicsGroups.add()
-        self.make_preview = True
+        # self.graphics_group = ao.root_comp.customGraphicsGroups.add() # Create graphics group if needed
+        self.make_preview = True # Ensure preview is triggered initially
 
         selection_input = inputs.addSelectionInput('sketch_point', "Center Point", "Pick Sketch Point for center")
         selection_input.addSelectionFilter("SketchPoints")
 
-        # Removed block_size, added qr_size
+        # Added qr_size input
         inputs.addValueInput('qr_size', 'QR Code Size (mm)', 'mm', adsk.core.ValueInput.createByString(QR_TARGET_SIZE_MM))
         # Inputs for block_height and base_height removed as requested.
         # They will now use the default values defined at the top of the script.
