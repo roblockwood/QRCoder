@@ -45,10 +45,11 @@ QRCoder leverages the pyqrcode library:
 import csv
 import os.path
 import tempfile
+import traceback # Import traceback for more detailed error info
 
 import adsk.core
-import adsk.fusion
-import adsk.cam
+adsk.fusion
+adsk.cam
 
 from ..apper import apper
 from .. import config
@@ -420,6 +421,10 @@ def add_csv_inputs(inputs: adsk.core.CommandInputs):
     # Set number of rows to accommodate up to 30 keys vertically
     inputs.addTextBoxCommandInput('extracted_keys', 'Extracted Keys', '', 30, True)
 
+    # --- Removed checkbox for batch STEP export from here ---
+    # inputs.addBoolValueInput('batch_export_step_checkbox', 'Export STEP Files (Batch)', True, '', False)
+    # -------------------------------------------------------
+
 
 # Create file browser dialog box
 def browse_for_csv():
@@ -458,18 +463,30 @@ def export_step_file(component: adsk.fusion.Component, show_success_message: boo
     # Create the full file path using the temporary directory and component name
     file_path = os.path.join(tmp_dir, f"{component.name}.step")
 
-    # Create STEP export options with the full file path and component
-    step_options = export_manager.createSTEPExportOptions(file_path, component)
-
     try:
+        # Create STEP export options with the full file path and component
+        step_options = export_manager.createSTEPExportOptions(file_path, component)
         export_manager.execute(step_options)
         # Only show success message if requested
         if show_success_message:
             ao.ui.messageBox(f'Successfully exported STEP file to: {file_path}')
         return True, file_path # Indicate success and return the file path
     except RuntimeError as error:
-        ao.ui.messageBox(f'Failed to export STEP file: {error}')
+        # Display individual error message only if not in batch mode (where show_success_message is False)
+        if show_success_message:
+             ao.ui.messageBox(f'Failed to export STEP file for {component.name}: {error}')
+        else:
+             # For batch mode, print to the text command window or log
+             print(f'Failed to export STEP file for {component.name}: {error}')
         return False, None # Indicate failure
+    except Exception as e:
+        # Catch any other potential errors during export
+        if show_success_message:
+            ao.ui.messageBox(f'An unexpected error occurred during STEP export for {component.name}: {e}')
+        else:
+             # For batch mode, print to the text command window or log
+             print(f'An unexpected error occurred during STEP export for {component.name}: {e}')
+        return False, None
 
 
 class QRCodeMaker(apper.Fusion360CommandBase):
@@ -482,6 +499,8 @@ class QRCodeMaker(apper.Fusion360CommandBase):
         self.extracted_keys = [] # Store extracted keys
         self._batch_generate_triggered = False
         # Removed _export_step flag
+        # New flag for controlling batch STEP export
+        self._batch_export_step = False
 
 
     def on_input_changed(self, command, inputs, changed_input, input_values):
@@ -490,8 +509,9 @@ class QRCodeMaker(apper.Fusion360CommandBase):
 
         # Always trigger preview unless specifically disabled below
         self.make_preview = True
-        # Reset batch trigger flag unless a CSV with keys is loaded
-        self._batch_generate_triggered = False
+        # --- Moved batch trigger flag reset to on_execute ---
+        # self._batch_generate_triggered = False
+        # ---------------------------------------------------
 
         # if changed_input.id == 'use_user_size': # Removed
         #     if input_values['use_user_size']:
@@ -511,16 +531,16 @@ class QRCodeMaker(apper.Fusion360CommandBase):
 
                 if self.extracted_keys:
                     self.make_preview = False
-                    self._batch_generate_triggered = True
+                    self._batch_generate_triggered = True # Set the flag here
                 else:
                     self.make_preview = True
-                    self._batch_generate_triggered = False
+                    self._batch_generate_triggered = False # Ensure flag is false if no keys
 
             else:
                  self.extracted_keys = []
                  inputs.itemById('extracted_keys').text = ''
                  self.make_preview = True
-                 self._batch_generate_triggered = False
+                 self._batch_generate_triggered = False # Ensure flag is false if no file
 
         # --- Added handler for the new export button ---
         elif changed_input.id == 'export_step_button':
@@ -567,6 +587,11 @@ class QRCodeMaker(apper.Fusion360CommandBase):
             # Note: addButtonRowCommandInput doesn't have a value to reset like BoolValueInput
             # changed_input.value = False # This line caused an error, removed.
         # ---------------------------------------------
+
+        # --- Added handler for the new batch export checkbox ---
+        elif changed_input.id == 'batch_export_step_checkbox':
+             self._batch_export_step = input_values['batch_export_step_checkbox']
+        # -----------------------------------------------------
 
 
     def on_preview(self, command, inputs, args, input_values):
@@ -615,14 +640,25 @@ class QRCodeMaker(apper.Fusion360CommandBase):
     def on_execute(self, command, inputs, args, input_values):
         """Handles the execute event (triggered by OK button)."""
         ao = apper.AppObjects()
+        # --- Diagnostic message ---
+        ao.ui.messageBox(f"on_execute called. is_make_qr: {self.is_make_qr}, _batch_generate_triggered: {self._batch_generate_triggered}, _batch_export_step: {self._batch_export_step}")
+        # --------------------------
+
+        # --- Reset batch trigger flag at the start of execute ---
+        # This flag is set in on_input_changed when a CSV is loaded
+        # and consumed here in on_execute.
+        batch_should_run = self._batch_generate_triggered
+        self._batch_generate_triggered = False
+        # -------------------------------------------------------
+
+
         design = ao.design
         generated_count = 0
         exported_count = 0 # Counter for successfully exported STEP files
         temp_dir_path = tempfile.gettempdir() # Get temporary directory path once
 
-        # Check if we are in CSV mode and the batch trigger flag is set
-        if not self.is_make_qr and self._batch_generate_triggered:
-            self._batch_generate_triggered = False
+        # Check if we are in CSV mode and the batch trigger flag was set
+        if not self.is_make_qr and batch_should_run:
 
             if 'sketch_point' not in input_values or not input_values['sketch_point']:
                 ao.ui.messageBox("Please select a sketch point for the QR code location.")
@@ -654,25 +690,36 @@ class QRCodeMaker(apper.Fusion360CommandBase):
 
                     for key in self.extracted_keys:
                         message_to_encode = key
-                        qr_data = make_qr_from_message({'message': message_to_encode})
+                        try:
+                            qr_data = make_qr_from_message({'message': message_to_encode})
 
-                        if len(qr_data) > 0:
-                            temp_input_values = {
-                                'message': message_to_encode,
-                                'qr_size': input_values['qr_size'],
-                                'sketch_point': input_values['sketch_point']
-                            }
-                            # make_real_geometry no longer exports automatically
-                            new_component = make_real_geometry(target_body, temp_input_values, qr_data)
-                            if new_component:
-                                generated_count += 1
-                                # Batch export happens here on OK click for CSV mode
-                                # Pass False to suppress individual success messages
-                                success, file_path = export_step_file(new_component, show_success_message=False)
-                                if success:
-                                     exported_count += 1 # Increment exported count on success
-                        else:
-                            ao.ui.messageBox(f"Could not generate QR code for key: {key}")
+                            if len(qr_data) > 0:
+                                temp_input_values = {
+                                    'message': message_to_encode,
+                                    'qr_size': input_values['qr_size'],
+                                    'sketch_point': input_values['sketch_point']
+                                }
+                                # make_real_geometry no longer exports automatically
+                                new_component = make_real_geometry(target_body, temp_input_values, qr_data)
+                                if new_component:
+                                    generated_count += 1
+                                    # --- Batch export happens here on OK click for CSV mode, controlled by checkbox ---
+                                    if self._batch_export_step:
+                                         # Pass False to suppress individual success messages
+                                         success, file_path = export_step_file(new_component, show_success_message=False)
+                                         if success:
+                                              exported_count += 1 # Increment exported count on success
+                                    # ---------------------------------------------------------------------------------
+                                else:
+                                    # Handle case where make_real_geometry returns None unexpectedly
+                                    ao.ui.messageBox(f"Failed to create geometry for key: {key}")
+                            else:
+                                ao.ui.messageBox(f"Could not generate QR data for key: {key}")
+                        except Exception as e:
+                            ao.ui.messageBox(f"An error occurred processing key '{key}': {e}")
+                            # Print traceback for more detailed debugging
+                            print(f"Traceback for key '{key}':\n{traceback.format_exc()}")
+
 
                     if generated_count > 0 and newTimelineGroup:
                         newTimelineGroup.endTimeStep = timeline.count
@@ -680,14 +727,18 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                      ao.ui.messageBox("Error: Could not access the active design.")
 
             # --- Consolidated message for batch export ---
-            ao.ui.messageBox(f"Generated {generated_count} QR codes from the CSV.\n"
-                             f"Exported {exported_count} .step files to: {temp_dir_path}")
+            # Only include export message if batch export was enabled
+            if self._batch_export_step:
+                ao.ui.messageBox(f"Generated {generated_count} QR codes from the CSV.\n"
+                                 f"Exported {exported_count} .step files to: {temp_dir_path}")
+            else:
+                 ao.ui.messageBox(f"Generated {generated_count} QR codes from the CSV.")
             # ---------------------------------------------
 
         # This is the original single QR creation logic for the OK button
         # It will still run if not in CSV mode OR if in CSV mode but no keys were loaded
         # (meaning the batch trigger flag was not set).
-        elif self.is_make_qr or (not self.is_make_qr and not self._batch_generate_triggered):
+        elif self.is_make_qr or (not self.is_make_qr and not batch_should_run):
             if self.is_make_qr:
                 ao = apper.AppObjects()
                 qr_data = make_qr_from_message(input_values)
@@ -732,6 +783,8 @@ class QRCodeMaker(apper.Fusion360CommandBase):
         self.extracted_keys = []
         self._batch_generate_triggered = False
         # Removed _export_step flag
+        # Initialize the new batch export flag
+        self._batch_export_step = False
 
 
         selection_input = inputs.addSelectionInput('sketch_point', "Center Point", "Pick Sketch Point for center")
@@ -747,13 +800,16 @@ class QRCodeMaker(apper.Fusion360CommandBase):
         else:
             add_csv_inputs(group_input.children)
 
-        # --- Add new Export group and button ---
+        # --- Add new Export group and button/checkbox ---
         export_group = inputs.addGroupCommandInput('export_group', 'Export')
         export_group.isExpanded = True # Keep the export group expanded by default
 
         # Add the export button ONLY for the single QR code mode
-        # Use self.is_make_qr which was set in __init__
+        # Add the checkbox ONLY for the CSV import mode
         if self.is_make_qr:
              # Corrected method to add a button and added isMultiSelectEnabled argument
              export_group.children.addButtonRowCommandInput('export_step_button', 'Export STEP', False)
-        # -----------------------------------------
+        else:
+             # Add checkbox for batch export in CSV mode
+             export_group.children.addBoolValueInput('batch_export_step_checkbox', 'Export STEP Files', True, '', False)
+        # -------------------------------------------------
