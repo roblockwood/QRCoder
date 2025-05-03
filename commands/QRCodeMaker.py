@@ -532,15 +532,27 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                 if self.extracted_keys:
                     self.make_preview = False
                     self._batch_generate_triggered = True # Set the flag here
+                    # --- Removed enabling/disabling OK button from here ---
+                    # if not self.is_make_qr:
+                    #      command.okButton.isEnabled = True
+                    # -----------------------------------------------------
                 else:
                     self.make_preview = True
                     self._batch_generate_triggered = False # Ensure flag is false if no keys
+                    # --- Removed enabling/disabling OK button from here ---
+                    # if not self.is_make_qr:
+                    #      command.okButton.isEnabled = False
+                    # ------------------------------------------------------
 
             else:
                  self.extracted_keys = []
                  inputs.itemById('extracted_keys').text = ''
                  self.make_preview = True
                  self._batch_generate_triggered = False # Ensure flag is false if no file
+                 # --- Removed enabling/disabling OK button from here ---
+                 # if not self.is_make_qr:
+                 #      command.okButton.isEnabled = False
+                 # ---------------------------------------------------------
 
         # --- Added handler for the new export button ---
         elif changed_input.id == 'export_step_button':
@@ -786,6 +798,11 @@ class QRCodeMaker(apper.Fusion360CommandBase):
         # Initialize the new batch export flag
         self._batch_export_step = False
 
+        # --- Removed disabling OK button here ---
+        # if not self.is_make_qr:
+        #     command.okButton.isEnabled = False
+        # ----------------------------------------
+
 
         selection_input = inputs.addSelectionInput('sketch_point', "Center Point", "Pick Sketch Point for center")
         selection_input.addSelectionFilter("SketchPoints")
@@ -813,3 +830,18 @@ class QRCodeMaker(apper.Fusion360CommandBase):
              # Add checkbox for batch export in CSV mode
              export_group.children.addBoolValueInput('batch_export_step_checkbox', 'Export STEP Files', True, '', False)
         # -------------------------------------------------
+
+    def on_validate_inputs(self, command, inputs, args):
+        """Validates the command inputs to enable/disable the OK button."""
+        # Only perform validation for CSV import mode
+        if not self.is_make_qr:
+            # Enable OK button only if a CSV file is loaded AND it contains keys
+            if len(self.extracted_keys) > 0:
+                args.isValid = True
+            else:
+                args.isValid = False
+        else:
+            # For single QR mode, the OK button is always enabled by default
+            # unless other inputs are invalid (which is handled automatically).
+            # We don't need specific validation logic here for the OK button state.
+            pass # Keep default validation behavior for single QR mode
