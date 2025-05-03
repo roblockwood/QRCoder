@@ -72,21 +72,6 @@ try:
         }
     )
 
-    my_addin.add_command(
-        'Import QR Code',
-        QRCodeMaker,
-        {
-            'cmd_description': 'Generate QR Code geometry by importing definition from a csv file.',
-            'cmd_id': 'import_qr',
-            'workspace': 'FusionSolidEnvironment',
-            'toolbar_panel_id': 'Commands',
-            'cmd_resources': 'csv_qr_icons',
-            'command_visible': True,
-            'command_promoted': True,
-            'is_make_qr': False
-        }
-    )
-
 except:
     app = adsk.core.Application.get()
     ui = app.userInterface
