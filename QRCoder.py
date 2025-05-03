@@ -56,7 +56,7 @@ try:
     my_addin = apper.FusionApp(config.app_name, config.company_name, False)
     my_addin.root_path = config.app_path
 
-    # General command showing inputs and user interaction
+    # General command showing inputs and user interaction for single QR code
     my_addin.add_command(
         'Create QR Code',
         QRCodeMaker,
@@ -71,6 +71,23 @@ try:
             'is_make_qr': True
         }
     )
+
+    # Command for creating multiple QR codes from CSV
+    my_addin.add_command(
+        'Create Multiple QR Codes from CSV',
+        QRCodeMaker,
+        {
+            'cmd_description': 'Generate multiple QR code geometries from data in a CSV file.',
+            'cmd_id': 'make_qr_from_csv',
+            'workspace': 'FusionSolidEnvironment',
+            'toolbar_panel_id': 'Commands',
+            'cmd_resources': 'csv_qr_icons',  # You can have different icons if you want
+            'command_visible': True,
+            'command_promoted': True, # You can promote this if it's a primary function
+            'is_make_qr': False
+        }
+    )
+
 
 except:
     app = adsk.core.Application.get()
@@ -88,4 +105,3 @@ def run(context):
 
 def stop(context):
     my_addin.stop_app()
-
