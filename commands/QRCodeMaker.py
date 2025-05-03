@@ -420,11 +420,7 @@ def add_csv_inputs(inputs: adsk.core.CommandInputs):
     inputs.addTextBoxCommandInput('extracted_keys', 'Extracted Keys', '', 30, True)
 
     # Add the new "Generate CSV" button using addBoolValueInput and setting isButton to True
-    generate_button = inputs.addBoolValueInput('generate_csv_button', 'Generate QR Codes from CSV', False, '', False)
-    generate_button.isFullWidth = True
-    generate_button.text = 'Generate QR Codes from CSV' # Set the button text
-    generate_button.tooltip = 'Click to generate QR codes for all keys in the CSV' # Add a tooltip
-    generate_button.isButton = True # Make it behave and look like a button
+    inputs.addBoolValueInput('generate_csv_button', 'Generate QR Codes from CSV', False, '', False)
 
 
 # Create file browser dialog box
@@ -620,12 +616,9 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                  ao.ui.messageBox("No target body found at the selected sketch point.")
                  return
 
-            # Loop through keys starting from the second one
-            if len(self.extracted_keys) > 1:
+            # Loop through ALL keys in the extracted_keys list
+            if len(self.extracted_keys) > 0:
                 # Removed all undo/redo group handling
-                # app = adsk.core.Application.get()
-                # try:
-                #     app.beginUndoRedoGroup("Generate QR Codes from CSV")
 
                 # Ensure design is available
                 if design:
@@ -639,7 +632,7 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                          newTimelineGroup = timelineGroups.add(start_index, start_index)
                          newTimelineGroup.name = "Generated QR Codes"
 
-                    for key in self.extracted_keys[1:]: # Start from the second element
+                    for key in self.extracted_keys: # Loop through ALL keys
                         message_to_encode = key
                         qr_data = make_qr_from_message({'message': message_to_encode})
 
@@ -666,13 +659,6 @@ class QRCodeMaker(apper.Fusion360CommandBase):
                 else:
                      ao.ui.messageBox("Error: Could not access the active design.")
 
-                # Removed all undo/redo group ending and error handling
-                # app.endUndoRedoGroup(True)
-                # except Exception as e:
-                #     if adsk.core.Application.get().undoRedoInProgress:
-                #          adsk.core.Application.get().endUndoRedoGroup(False)
-                #     ao.ui.messageBox(f"Error during QR code generation: {e}")
-                #     generated_count = 0 # Reset count on error
 
             # Display the count of generated QR codes
             ao.ui.messageBox(f"Generated {generated_count} QR codes from the CSV.")
